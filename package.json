@@ -1,0 +1,33 @@
+{
+  "name": "next-quick-cache",
+  "version": "1.0.0",
+  "description": "A TypeScript cache library with stale-while-revalidate support",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build",
+    "lint": "eslint src --ext .ts",
+    "lint:fix": "eslint src --ext .ts --fix"
+  },
+  "keywords": [
+    "cache",
+    "typescript",
+    "stale-while-revalidate",
+    "background-revalidation",
+    "next.js",
+    "unstable_cache"
+  ],
+  "author": "",
+  "license": "CC0-1.0",
+  "devDependencies": {
+    "@types/node": "^22.12.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "eslint": "^8.0.0",
+    "typescript": "^5.7.3"
+  }
+}
