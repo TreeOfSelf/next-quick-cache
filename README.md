@@ -2,7 +2,7 @@
 
 A lightweight TypeScript cache library with stale-while-revalidate support. Drop-in replacement for Next.js `unstable_cache` that works anywhere. 
 
-he motivation for this was that I noticed unstable_cache has issues where if a process to revalidate is extremely heavy, it would run multiple processes if multiple people needed revalidations at once. It also would wait instead of serving stale data, which may end up having the user wait a long time. This solves that. 
+The motivation for this was that I noticed unstable_cache has issues where if a process to revalidate is extremely heavy, it would run multiple processes if multiple people needed revalidations at once. It also would wait instead of serving stale data, which may end up having the user wait a long time. This solves that. 
 
 ## Features
 
