@@ -1,6 +1,6 @@
 {
   "name": "next-quick-cache",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "A TypeScript cache library with stale-while-revalidate support",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
