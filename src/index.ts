@@ -1,5 +1,6 @@
 const cache = new Map();
 const inFlightRequests = new Map<string, Promise<unknown>>();
+const backgroundRevalidations = new Set<string>();
 
 interface CacheOptions {
     tags?: string[];
@@ -65,6 +66,12 @@ const revalidateInBackground = <TArgs extends readonly unknown[], TReturn>(
     cacheKey: string,
     revalidate: number | false
 ) => {
+    if (backgroundRevalidations.has(cacheKey)) {
+        return;
+    }
+    
+    backgroundRevalidations.add(cacheKey);
+    
     (async () => {
         try {
             const freshData = await fetchData(...args);
@@ -76,6 +83,8 @@ const revalidateInBackground = <TArgs extends readonly unknown[], TReturn>(
             });
         } catch (error) {
             console.warn('Background revalidation failed:', error);
+        } finally {
+            backgroundRevalidations.delete(cacheKey);
         }
     })();
 };
