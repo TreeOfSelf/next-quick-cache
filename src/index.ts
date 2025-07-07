@@ -59,17 +59,13 @@ export default function quick_cache<TArgs extends readonly unknown[], TReturn>(
     };
 }
 
-const revalidateInBackground = async <TArgs extends readonly unknown[], TReturn>(
+const revalidateInBackground = <TArgs extends readonly unknown[], TReturn>(
     fetchData: (...args: TArgs) => Promise<TReturn>,
     args: TArgs,
     cacheKey: string,
     revalidate: number | false
 ) => {
-    if (inFlightRequests.has(cacheKey)) {
-        return inFlightRequests.get(cacheKey) as Promise<TReturn>;
-    }
-    
-    const requestPromise = (async () => {
+    (async () => {
         try {
             const freshData = await fetchData(...args);
             const expiry = revalidate === false ? Infinity : Date.now() + revalidate * 1000;
@@ -78,12 +74,8 @@ const revalidateInBackground = async <TArgs extends readonly unknown[], TReturn>
                 expiry,
                 revalidate
             });
-            return freshData;
-        } finally {
-            inFlightRequests.delete(cacheKey);
+        } catch (error) {
+            console.warn('Background revalidation failed:', error);
         }
     })();
-    
-    inFlightRequests.set(cacheKey, requestPromise);
-    return requestPromise;
 };
