@@ -28,15 +28,15 @@ export default function quick_cache<TArgs extends readonly unknown[], TReturn>(
         
         const cachedEntry = cache.get(cacheKey) as CacheEntry<TReturn> | undefined;
         
-        if (inFlightRequests.has(cacheKey)) {
-            return inFlightRequests.get(cacheKey) as Promise<TReturn>;
-        }
-        
         if (cachedEntry) {
             if (revalidate !== false && Date.now() > cachedEntry.expiry) {
                 revalidateInBackground(fetchData, args, cacheKey, revalidate);
             }
             return cachedEntry.data;
+        }
+        
+        if (inFlightRequests.has(cacheKey)) {
+            return inFlightRequests.get(cacheKey) as Promise<TReturn>;
         }
         
         const requestPromise = (async () => {
