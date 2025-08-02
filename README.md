@@ -65,6 +65,34 @@ const [data1, data2] = await Promise.all([
 ]);
 ```
 
+### Immediate Starting Value
+
+You can provide a `startingValue` function in the options. This function's return value will be served immediately on the initial request while the actual data is fetched in the background. This ensures the user never has to wait, even on the first load.
+
+```typescript
+const getCachedDataWithStartingValue = quick_cache(
+    async (id: string) => {
+        // This will be fetched in the background on the first call
+        return await getRealData(id);
+    },
+    ['user-with-starting-value'],
+    {
+        revalidate: 60,
+        // Return a starting value immediately
+        startingValue: (id: string) => ({
+            id,
+            name: 'Loading...',
+            isDefault: true,
+        }),
+    }
+);
+
+// First call: returns the starting user object instantly
+const user = await getCachedDataWithStartingValue('456'); 
+
+// Subsequent calls (after fetch completes) will return cached real data
+```
+
 ### Cache Forever
 
 ```typescript
@@ -93,16 +121,18 @@ quick_cache<TArgs, TReturn>(
   options?: {
     tags?: string[];
     revalidate?: number | false;
+    startingValue?: (...args: TArgs) => TReturn;
   }
 ): (...args: TArgs) => Promise<TReturn>
 ```
 
 ### Parameters
 
-- `fetchData`: Async function to cache
-- `keyParts`: Additional cache key identification (optional)
-- `options.revalidate`: Seconds until revalidation, or `false` to never expire
-- `options.tags`: Tags for future cache invalidation support
+- `fetchData`: Async function to cache.
+- `keyParts`: Additional cache key identification (optional).
+- `options.revalidate`: Seconds until revalidation, or `false` to never expire.
+- `options.startingValue`: A function that returns an immediate value if no cache is present. The data fetch will still run in the background.
+- `options.tags`: Tags for future cache invalidation support (future feature).
 
 ## License
 
