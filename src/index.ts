@@ -1,7 +1,6 @@
 const cache = new Map<string, CacheEntry<unknown>>();
 const inFlightRequests = new Map<string, Promise<unknown>>();
 const backgroundRevalidations = new Set<string>();
-const functionCache = new Map<string, Function>();
 
 interface CacheOptions<TArgs extends readonly unknown[], TReturn> {
     tags?: string[];
@@ -23,21 +22,11 @@ export default function quick_cache<TArgs extends readonly unknown[], TReturn>(
     
     const { revalidate = false, startingValue } = options;
     
-    // THIS IS THE CRITICAL FIX that makes it behave like unstable_cache
-    // Create a unique key for the function's configuration.
-    const functionConfigKey = `${fetchData.toString()}:${JSON.stringify(keyParts)}`;
-    
-    // If we have already created a cached function for this exact configuration,
-    // return that same function instance immediately.
-    if (functionCache.has(functionConfigKey)) {
-        return functionCache.get(functionConfigKey) as (...args: TArgs) => Promise<TReturn>;
-    }
-     
-    // If not, create a new cached function.
-    const cachedFunction = async (...args: TArgs): Promise<TReturn> => {
+    return async (...args: TArgs): Promise<TReturn> => {
         const argsKey = JSON.stringify(args);
-        // The final cache key is a combination of the function's unique keyParts and the specific arguments for this call.
-        const cacheKey = `${JSON.stringify(keyParts)}:${argsKey}`;
+        const keyPartsKey = keyParts ? JSON.stringify(keyParts) : '';
+        const functionKey = fetchData.toString();
+        const cacheKey = `${functionKey}:${keyPartsKey}:${argsKey}`;
         
         const cachedEntry = cache.get(cacheKey) as CacheEntry<TReturn> | undefined;
         
@@ -75,11 +64,6 @@ export default function quick_cache<TArgs extends readonly unknown[], TReturn>(
 
         return requestPromise;
     };
-    
-    // Store the newly created function in the function cache for future calls.
-    functionCache.set(functionConfigKey, cachedFunction as Function);
-    
-    return cachedFunction;
 }
 
 const revalidateInBackground = <TArgs extends readonly unknown[], TReturn>(
@@ -104,7 +88,6 @@ const revalidateInBackground = <TArgs extends readonly unknown[], TReturn>(
                 revalidate
             });
         } catch (error) {
-            // In a real library, you might want a more robust logging or error handling strategy.
             console.warn('Background revalidation failed:', error);
         } finally {
             backgroundRevalidations.delete(cacheKey);
