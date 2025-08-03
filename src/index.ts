@@ -1,6 +1,7 @@
 const cache = new Map<string, CacheEntry<unknown>>();
 const inFlightRequests = new Map<string, Promise<unknown>>();
 const backgroundRevalidations = new Set<string>();
+const cachedFunctions = new Map<string, (...args: any[]) => Promise<any>>();
 
 interface CacheOptions<TArgs extends readonly unknown[], TReturn> {
     tags?: string[];
@@ -22,7 +23,13 @@ export default function quick_cache<TArgs extends readonly unknown[], TReturn>(
     
     const { revalidate = false, startingValue } = options;
     
-    return async (...args: TArgs): Promise<TReturn> => {
+    const functionConfigKey = `${fetchData.toString()}:${JSON.stringify(keyParts)}:${JSON.stringify(options)}`;
+    
+    if (cachedFunctions.has(functionConfigKey)) {
+        return cachedFunctions.get(functionConfigKey) as (...args: TArgs) => Promise<TReturn>;
+    }
+    
+    const cachedFunction = async (...args: TArgs): Promise<TReturn> => {
         const argsKey = JSON.stringify(args);
         const keyPartsKey = keyParts ? JSON.stringify(keyParts) : '';
         const cacheKey = `${keyPartsKey}:${argsKey}`;
@@ -63,6 +70,10 @@ export default function quick_cache<TArgs extends readonly unknown[], TReturn>(
 
         return requestPromise;
     };
+    
+    cachedFunctions.set(functionConfigKey, cachedFunction);
+    
+    return cachedFunction;
 }
 
 const revalidateInBackground = <TArgs extends readonly unknown[], TReturn>(
