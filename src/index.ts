@@ -25,8 +25,7 @@ export default function quick_cache<TArgs extends readonly unknown[], TReturn>(
     return async (...args: TArgs): Promise<TReturn> => {
         const argsKey = JSON.stringify(args);
         const keyPartsKey = keyParts ? JSON.stringify(keyParts) : '';
-        const functionKey = fetchData.toString();
-        const cacheKey = `${functionKey}:${keyPartsKey}:${argsKey}`;
+        const cacheKey = `${keyPartsKey}:${argsKey}`;
         
         const cachedEntry = cache.get(cacheKey) as CacheEntry<TReturn> | undefined;
         
