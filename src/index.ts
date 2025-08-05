@@ -30,28 +30,21 @@ export default function quick_cache<TArgs extends readonly unknown[], TReturn>(
         
         const cachedEntry = cache.get(cacheKey) as CacheEntry<TReturn> | undefined;
         
-        // If we have cached data
         if (cachedEntry) {
-            // If it's expired and we can revalidate, do it in background
             if (revalidate !== false && Date.now() > cachedEntry.expiry) {
                 revalidateInBackground(fetchData, args, cacheKey, revalidate);
             }
-            // Always return the cached data (even if stale)
             return cachedEntry.data;
         }
         
-        // No cached data exists
-        // If there's already a request in flight AND we don't have a startingValue, wait for it
         if (inFlightRequests.has(cacheKey) && !startingValue) {
             return inFlightRequests.get(cacheKey) as Promise<TReturn>;
         }
         
-        // If there's already a request in flight AND we have startingValue, return startingValue
         if (inFlightRequests.has(cacheKey) && startingValue) {
             return startingValue(...args);
         }
         
-        // No request in flight, start a new one
         const requestPromise = (async () => {
             try {
                 const freshData = await fetchData(...args);
@@ -69,12 +62,10 @@ export default function quick_cache<TArgs extends readonly unknown[], TReturn>(
         
         inFlightRequests.set(cacheKey, requestPromise);
         
-        // If we have a startingValue, return it immediately while fetch happens in background
         if (startingValue) {
             return startingValue(...args);
         }
 
-        // No startingValue, must wait for the actual data
         return requestPromise;
     };
 }
