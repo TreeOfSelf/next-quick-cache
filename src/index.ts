@@ -7,7 +7,7 @@ import superjson from 'superjson'
 const cache = new Map<string, CacheEntry<unknown>>()
 const inFlightRequests = new Map<string, Promise<unknown>>()
 const backgroundRevalidations = new Set<string>()
-const writeQueue = new Map<string, Promise<void>>()
+const pendingWrites = new Map<string, { promise: Promise<void>, entry: CacheEntry<unknown> }>()
 
 const CACHE_DIR = path.join(os.tmpdir(), 'quick-cache')
 
@@ -57,25 +57,27 @@ const loadFromDisk = async (cacheKey: string): Promise<{ entry: CacheEntry<unkno
 const saveToDisk = async (cacheKey: string, entry: CacheEntry<unknown>): Promise<void> => {
     const filePath = getCacheFilePath(cacheKey)
     
-    const existingWrite = writeQueue.get(filePath)
-    if (existingWrite) {
-        await existingWrite.catch(() => {})
-        return
+    const existing = pendingWrites.get(filePath)
+    if (existing) {
+        existing.entry = entry
+        return existing.promise
     }
 
     const writeOperation = (async () => {
         try {
             await initializeCacheDirectory()
-            await fs.writeFile(filePath, superjson.stringify(entry))
+            const latestEntry = pendingWrites.get(filePath)?.entry || entry
+            await fs.writeFile(filePath, superjson.stringify(latestEntry))
         } catch (error) {
             console.warn('Failed to save cache to disk:', error)
+            throw error
         } finally {
-            writeQueue.delete(filePath)
+            pendingWrites.delete(filePath)
         }
     })()
 
-    writeQueue.set(filePath, writeOperation)
-    await writeOperation
+    pendingWrites.set(filePath, { promise: writeOperation, entry })
+    return writeOperation
 }
 
 export default function quick_cache<TArgs extends readonly unknown[], TReturn>(
@@ -189,8 +191,8 @@ const revalidateInBackground = <TArgs extends readonly unknown[], TReturn>(
 
 export const clearCache = async (): Promise<void> => {
     cache.clear()
-    await Promise.allSettled(Array.from(writeQueue.values()))
-    writeQueue.clear()
+    await Promise.allSettled(Array.from(pendingWrites.values()).map(p => p.promise))
+    pendingWrites.clear()
     try {
         await initializeCacheDirectory()
         const files = await fs.readdir(CACHE_DIR)
@@ -211,7 +213,7 @@ export const getCacheStats = async (): Promise<{
     pendingWrites: number
 }> => {
     const memoryEntries = cache.size
-    const pendingWrites = writeQueue.size
+    const pendingWritesCount = pendingWrites.size
 
     try {
         await initializeCacheDirectory()
@@ -228,9 +230,9 @@ export const getCacheStats = async (): Promise<{
             memoryEntries,
             diskEntries: cacheFiles.length,
             diskSizeBytes: totalSize,
-            pendingWrites
+            pendingWrites: pendingWritesCount
         }
     } catch {
-        return { memoryEntries, diskEntries: 0, pendingWrites }
+        return { memoryEntries, diskEntries: 0, pendingWrites: pendingWritesCount }
     }
 }
