@@ -56,28 +56,26 @@ const loadFromDisk = async (cacheKey: string): Promise<{ entry: CacheEntry<unkno
 
 const saveToDisk = async (cacheKey: string, entry: CacheEntry<unknown>): Promise<void> => {
     const filePath = getCacheFilePath(cacheKey)
+    
     const existingWrite = writeQueue.get(filePath)
+    if (existingWrite) {
+        await existingWrite.catch(() => {})
+        return
+    }
 
-    const writeOperation = async () => {
+    const writeOperation = (async () => {
         try {
             await initializeCacheDirectory()
             await fs.writeFile(filePath, superjson.stringify(entry))
         } catch (error) {
             console.warn('Failed to save cache to disk:', error)
         } finally {
-            if (writeQueue.get(filePath) === currentWrite) {
-                writeQueue.delete(filePath)
-            }
+            writeQueue.delete(filePath)
         }
-    }
+    })()
 
-    const currentWrite = existingWrite 
-        ? existingWrite.then(writeOperation).catch(() => writeOperation())
-        : writeOperation()
-
-    writeQueue.set(filePath, currentWrite)
-
-    return
+    writeQueue.set(filePath, writeOperation)
+    await writeOperation
 }
 
 export default function quick_cache<TArgs extends readonly unknown[], TReturn>(
@@ -135,7 +133,9 @@ export default function quick_cache<TArgs extends readonly unknown[], TReturn>(
                 }
                 cache.set(cacheKey, entry)
                 if (persistToDisk) {
-                    saveToDisk(cacheKey, entry)
+                    saveToDisk(cacheKey, entry).catch(error => {
+                        console.warn('Failed to save cache to disk:', error)
+                    })
                 }
                 return freshData
             } finally {
@@ -175,7 +175,9 @@ const revalidateInBackground = <TArgs extends readonly unknown[], TReturn>(
             }
             cache.set(cacheKey, entry)
             if (persistToDisk) {
-                saveToDisk(cacheKey, entry)
+                saveToDisk(cacheKey, entry).catch(error => {
+                    console.warn('Background revalidation disk save failed:', error)
+                })
             }
         } catch (error) {
             console.warn('Background revalidation failed:', error)
