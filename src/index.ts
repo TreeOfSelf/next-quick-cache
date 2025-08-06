@@ -98,12 +98,12 @@ export default function quick_cache<TArgs extends readonly unknown[], TReturn>(
             return cachedEntry.data;
         }
         
-        if (inFlightRequests.has(cacheKey) && !startingValue) {
-            return inFlightRequests.get(cacheKey) as Promise<TReturn>;
-        }
-        
-        if (inFlightRequests.has(cacheKey) && startingValue) {
-            return startingValue(...args);
+        if (inFlightRequests.has(cacheKey)) {
+            if (startingValue) {
+                return startingValue(...args);
+            } else {
+                return inFlightRequests.get(cacheKey) as Promise<TReturn>;
+            }
         }
         
         const requestPromise = (async () => {
