@@ -1,6 +1,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
+import { createHash } from 'crypto';
 
 const cache = new Map<string, CacheEntry<unknown>>();
 const inFlightRequests = new Map<string, Promise<unknown>>();
@@ -34,8 +35,8 @@ const initializeCacheDirectory = async () => {
 };
 
 const getCacheFilePath = (cacheKey: string): string => {
-    const safeKey = Buffer.from(cacheKey).toString('base64').replace(/[/+=]/g, '_');
-    return path.join(CACHE_DIR, `${safeKey}.json`);
+    const hash = createHash('sha256').update(cacheKey).digest('hex');
+    return path.join(CACHE_DIR, `${hash}.json`);
 };
 
 const loadFromDisk = async (cacheKey: string): Promise<CacheEntry<unknown> | null> => {
