@@ -2,6 +2,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
 import { createHash } from 'crypto';
+import superjson from 'superjson';
 
 const cache = new Map<string, CacheEntry<unknown>>();
 const inFlightRequests = new Map<string, Promise<unknown>>();
@@ -44,7 +45,7 @@ const loadFromDisk = async (cacheKey: string): Promise<{ entry: CacheEntry<unkno
         await initializeCacheDirectory();
         const filePath = getCacheFilePath(cacheKey);
         const data = await fs.readFile(filePath, 'utf8');
-        const entry = JSON.parse(data) as CacheEntry<unknown>;
+        const entry = superjson.parse(data) as CacheEntry<unknown>;
         const isExpired = entry.expiry !== Infinity && Date.now() > entry.expiry;
         return { entry, isExpired };
     } catch {
@@ -56,7 +57,7 @@ const saveToDisk = async (cacheKey: string, entry: CacheEntry<unknown>): Promise
     try {
         await initializeCacheDirectory();
         const filePath = getCacheFilePath(cacheKey);
-        await fs.writeFile(filePath, JSON.stringify(entry));
+        await fs.writeFile(filePath, superjson.stringify(entry));
     } catch (error) {
         console.warn('Failed to save cache to disk:', error);
     }
@@ -67,14 +68,18 @@ export default function quick_cache<TArgs extends readonly unknown[], TReturn>(
     keyParts?: readonly string[],
     options: CacheOptions<TArgs, TReturn> = {}
 ): (...args: TArgs) => Promise<TReturn> {
+
     const { revalidate = false, startingValue, persistToDisk = true } = options;
+
     return async (...args: TArgs): Promise<TReturn> => {
         const argsKey = JSON.stringify(args);
         const keyPartsKey = keyParts ? JSON.stringify(keyParts) : '';
         const functionKey = fetchData.toString();
         const cacheKey = `${functionKey}:${keyPartsKey}:${argsKey}`;
+
         let cachedEntry = cache.get(cacheKey) as CacheEntry<TReturn> | undefined;
         let diskDataIsExpired = false;
+
         if (!cachedEntry && persistToDisk) {
             const diskResult = await loadFromDisk(cacheKey);
             if (diskResult.entry) {
@@ -85,6 +90,7 @@ export default function quick_cache<TArgs extends readonly unknown[], TReturn>(
                 }
             }
         }
+
         if (cachedEntry) {
             const needsRevalidation = revalidate !== false && Date.now() > cachedEntry.expiry;
             if (needsRevalidation) {
@@ -92,6 +98,7 @@ export default function quick_cache<TArgs extends readonly unknown[], TReturn>(
             }
             return cachedEntry.data;
         }
+
         if (inFlightRequests.has(cacheKey)) {
             if (startingValue) {
                 return startingValue(...args);
@@ -99,6 +106,7 @@ export default function quick_cache<TArgs extends readonly unknown[], TReturn>(
                 return inFlightRequests.get(cacheKey) as Promise<TReturn>;
             }
         }
+
         const requestPromise = (async () => {
             try {
                 const freshData = await fetchData(...args);
@@ -117,10 +125,13 @@ export default function quick_cache<TArgs extends readonly unknown[], TReturn>(
                 inFlightRequests.delete(cacheKey);
             }
         })();
+
         inFlightRequests.set(cacheKey, requestPromise);
+
         if (startingValue) {
             return startingValue(...args);
         }
+
         return requestPromise;
     };
 }
@@ -163,9 +174,8 @@ export const clearCache = async (): Promise<void> => {
         await initializeCacheDirectory();
         const files = await fs.readdir(CACHE_DIR);
         await Promise.all(
-            files
-                .filter(file => file.endsWith('.json'))
-                .map(file => fs.unlink(path.join(CACHE_DIR, file)))
+            files.filter(file => file.endsWith('.json'))
+            .map(file => fs.unlink(path.join(CACHE_DIR, file)))
         );
     } catch (error) {
         console.warn('Failed to clear disk cache:', error);
