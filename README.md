@@ -11,6 +11,7 @@ The motivation for this was that I noticed unstable_cache has issues where if a 
 - **TypeScript support** - Full type safety with generics
 - **Simple API** - Same interface as Next.js `unstable_cache`
 - **Universal** - Works in any JavaScript environment, not just Next.js
+- **Disk persistence** - Optionally persist cache to disk for cross-process sharing
 
 ## Installation
 
@@ -105,6 +106,21 @@ const getCachedConfig = quick_cache(
 );
 ```
 
+### Disk Persistence
+
+By default, cache entries are persisted to disk in the system's temp directory. This allows cache to survive process restarts and be shared across multiple processes. You can disable this behavior:
+
+```typescript
+const getCachedData = quick_cache(
+  async (id: string) => await fetchData(id),
+  ['data'],
+  {
+    revalidate: 60,
+    persistToDisk: false, // Only keep in memory
+  }
+);
+```
+
 ## How It Works
 
 1. **First call**: Executes function, caches result
@@ -132,6 +148,7 @@ quick_cache<TArgs, TReturn>(
 - `keyParts`: Additional cache key identification (optional).
 - `options.revalidate`: Seconds until revalidation, or `false` to never expire.
 - `options.startingValue`: A function that returns an immediate value if no cache is present. The data fetch will still run in the background.
+- `options.persistToDisk`: Whether to persist cache to disk (default: `true`).
 - `options.tags`: Tags for future cache invalidation support (future feature).
 
 ## License
