@@ -9,6 +9,8 @@ const inFlightRequests = new Map<string, Promise<unknown>>()
 const backgroundRevalidations = new Set<string>()
 const pendingWrites = new Map<string, { promise: Promise<void>, entry: CacheEntry<unknown> }>()
 
+const tagToCacheKeys = new Map<string, Set<string>>()
+
 const CACHE_DIR = path.join(os.tmpdir(), 'quick-cache')
 
 interface CacheOptions<TArgs extends readonly unknown[], TReturn> {
@@ -16,12 +18,14 @@ interface CacheOptions<TArgs extends readonly unknown[], TReturn> {
     revalidate?: number | false
     startingValue?: (...args: TArgs) => TReturn
     persistToDisk?: boolean
+    serveStale?: boolean
 }
 
 interface CacheEntry<T> {
     data: T
     expiry: number
     revalidate: number | false
+    tags?: string[]
 }
 
 let cacheDirectoryInitialized = false
@@ -80,12 +84,39 @@ const saveToDisk = async (cacheKey: string, entry: CacheEntry<unknown>): Promise
     return writeOperation
 }
 
+export const revalidateTag = async (tag: string): Promise<void> => {
+    const cacheKeys = tagToCacheKeys.get(tag)
+    if (!cacheKeys) {
+        return
+    }
+
+    const promises: Promise<void>[] = []
+    for (const cacheKey of cacheKeys) {
+        promises.push((async () => {
+            let entry = cache.get(cacheKey) as CacheEntry<unknown> | undefined
+
+            if (!entry) {
+                const diskResult = await loadFromDisk(cacheKey)
+                if (diskResult.entry) {
+                    entry = diskResult.entry
+                }
+            }
+
+            if (entry) {
+                entry.expiry = 0
+                await saveToDisk(cacheKey, entry)
+            }
+        })())
+    }
+    await Promise.all(promises)
+}
+
 export default function quick_cache<TArgs extends readonly unknown[], TReturn>(
     fetchData: (...args: TArgs) => Promise<TReturn>,
     keyParts?: readonly string[],
     options: CacheOptions<TArgs, TReturn> = {}
 ): (...args: TArgs) => Promise<TReturn> {
-    const { revalidate = false, startingValue, persistToDisk = true } = options
+    const { revalidate = false, startingValue, persistToDisk = true, tags = [], serveStale = true } = options
 
     return async (...args: TArgs): Promise<TReturn> => {
         const argsKey = JSON.stringify(args)
@@ -95,15 +126,21 @@ export default function quick_cache<TArgs extends readonly unknown[], TReturn>(
         const cacheKey = `${cwdKey}:${functionKey}:${keyPartsKey}:${argsKey}`
 
         let cachedEntry = cache.get(cacheKey) as CacheEntry<TReturn> | undefined
-        let diskDataIsExpired = false
 
         if (!cachedEntry && persistToDisk) {
             const diskResult = await loadFromDisk(cacheKey)
             if (diskResult.entry) {
                 cachedEntry = diskResult.entry as CacheEntry<TReturn>
-                diskDataIsExpired = diskResult.isExpired
-                if (!diskDataIsExpired) {
+                if (!diskResult.isExpired) {
                     cache.set(cacheKey, cachedEntry)
+                }
+                if (cachedEntry.tags) {
+                    for (const tag of cachedEntry.tags) {
+                        if (!tagToCacheKeys.has(tag)) {
+                            tagToCacheKeys.set(tag, new Set())
+                        }
+                        tagToCacheKeys.get(tag)!.add(cacheKey)
+                    }
                 }
             }
         }
@@ -111,9 +148,15 @@ export default function quick_cache<TArgs extends readonly unknown[], TReturn>(
         if (cachedEntry) {
             const needsRevalidation = revalidate !== false && Date.now() > cachedEntry.expiry
             if (needsRevalidation) {
-                revalidateInBackground(fetchData, args, cacheKey, revalidate, persistToDisk)
+                if (serveStale) {
+                    revalidateInBackground(fetchData, args, cacheKey, revalidate, persistToDisk, tags)
+                    return cachedEntry.data
+                } else {
+                    cache.delete(cacheKey)
+                }
+            } else {
+                return cachedEntry.data
             }
-            return cachedEntry.data
         }
 
         if (inFlightRequests.has(cacheKey)) {
@@ -131,9 +174,18 @@ export default function quick_cache<TArgs extends readonly unknown[], TReturn>(
                 const entry: CacheEntry<TReturn> = {
                     data: freshData,
                     expiry,
-                    revalidate
+                    revalidate,
+                    tags
                 }
                 cache.set(cacheKey, entry)
+                if (tags.length > 0) {
+                    for (const tag of tags) {
+                        if (!tagToCacheKeys.has(tag)) {
+                            tagToCacheKeys.set(tag, new Set())
+                        }
+                        tagToCacheKeys.get(tag)!.add(cacheKey)
+                    }
+                }
                 if (persistToDisk) {
                     saveToDisk(cacheKey, entry).catch(error => {
                         console.warn('Failed to save cache to disk:', error)
@@ -160,7 +212,8 @@ const revalidateInBackground = <TArgs extends readonly unknown[], TReturn>(
     args: TArgs,
     cacheKey: string,
     revalidate: number | false,
-    persistToDisk: boolean = true
+    persistToDisk: boolean = true,
+    tags: string[] = []
 ) => {
     if (backgroundRevalidations.has(cacheKey)) {
         return
@@ -173,9 +226,18 @@ const revalidateInBackground = <TArgs extends readonly unknown[], TReturn>(
             const entry: CacheEntry<TReturn> = {
                 data: freshData,
                 expiry,
-                revalidate
+                revalidate,
+                tags
             }
             cache.set(cacheKey, entry)
+            if (tags.length > 0) {
+                for (const tag of tags) {
+                    if (!tagToCacheKeys.has(tag)) {
+                        tagToCacheKeys.set(tag, new Set())
+                    }
+                    tagToCacheKeys.get(tag)!.add(cacheKey)
+                }
+            }
             if (persistToDisk) {
                 saveToDisk(cacheKey, entry).catch(error => {
                     console.warn('Background revalidation disk save failed:', error)
@@ -187,52 +249,4 @@ const revalidateInBackground = <TArgs extends readonly unknown[], TReturn>(
             backgroundRevalidations.delete(cacheKey)
         }
     })()
-}
-
-export const clearCache = async (): Promise<void> => {
-    cache.clear()
-    await Promise.allSettled(Array.from(pendingWrites.values()).map(p => p.promise))
-    pendingWrites.clear()
-    try {
-        await initializeCacheDirectory()
-        const files = await fs.readdir(CACHE_DIR)
-        await Promise.all(
-            files
-                .filter(file => file.endsWith('.json'))
-                .map(file => fs.unlink(path.join(CACHE_DIR, file)))
-        )
-    } catch (error) {
-        console.warn('Failed to clear disk cache:', error)
-    }
-}
-
-export const getCacheStats = async (): Promise<{
-    memoryEntries: number
-    diskEntries: number
-    diskSizeBytes?: number
-    pendingWrites: number
-}> => {
-    const memoryEntries = cache.size
-    const pendingWritesCount = pendingWrites.size
-
-    try {
-        await initializeCacheDirectory()
-        const files = await fs.readdir(CACHE_DIR)
-        const cacheFiles = files.filter(file => file.endsWith('.json'))
-        let totalSize = 0
-        for (const file of cacheFiles) {
-            try {
-                const stats = await fs.stat(path.join(CACHE_DIR, file))
-                totalSize += stats.size
-            } catch {}
-        }
-        return {
-            memoryEntries,
-            diskEntries: cacheFiles.length,
-            diskSizeBytes: totalSize,
-            pendingWrites: pendingWritesCount
-        }
-    } catch {
-        return { memoryEntries, diskEntries: 0, pendingWrites: pendingWritesCount }
-    }
 }
