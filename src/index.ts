@@ -111,7 +111,7 @@ export const revalidateTag = async (tag: string): Promise<void> => {
     await Promise.all(promises)
 }
 
-export default function quick_cache<TArgs extends readonly unknown[], TReturn>(
+export function quick_cache<TArgs extends readonly unknown[], TReturn>(
     fetchData: (...args: TArgs) => Promise<TReturn>,
     keyParts?: readonly string[],
     options: CacheOptions<TArgs, TReturn> = {}

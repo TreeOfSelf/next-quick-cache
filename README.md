@@ -26,7 +26,7 @@ npm install next-quick-cache
 ### Basic Example
 
 ```typescript
-import quick_cache from 'next-quick-cache';
+import { quick_cache } from 'next-quick-cache';
 
 // Create a cached function
 const getCachedUser = quick_cache(
@@ -47,7 +47,7 @@ const user = await getCachedUser('123');
 ### Advanced Example with Tags
 
 ```typescript
-import quick_cache from 'next-quick-cache';
+import { quick_cache } from 'next-quick-cache';
 
 // Cache with custom key parts and tags
 const getCachedData = quick_cache(
