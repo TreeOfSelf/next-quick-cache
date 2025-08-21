@@ -7,6 +7,8 @@ The motivation for this was that I noticed unstable_cache has issues where if a 
 ## Features
 
 - **Stale-while-revalidate** - Serves cached data instantly while fetching fresh data in background
+- **On-demand Revalidation** - Invalidate groups of cache entries using tags.
+- **Configurable Stale Behavior** - Choose to serve stale data or wait for a fresh response.
 - **Request deduplication** - Prevents multiple identical requests from running simultaneously  
 - **TypeScript support** - Full type safety with generics
 - **Simple API** - Same interface as Next.js `unstable_cache`
@@ -42,19 +44,19 @@ const getCachedUser = quick_cache(
 const user = await getCachedUser('123');
 ```
 
-### Advanced Example
+### Advanced Example with Tags
 
 ```typescript
 import quick_cache from 'next-quick-cache';
 
-// Cache with custom key parts
+// Cache with custom key parts and tags
 const getCachedData = quick_cache(
   async (userId: string, includeProfile: boolean) => {
     return await fetchComplexData(userId, includeProfile);
   },
   ['complex-data'], // Additional cache key identification
   {
-    tags: ['users', 'profiles'], // Tags for cache invalidation (future feature)
+    tags: ['users', 'profiles'], // Tags for cache invalidation
     revalidate: 300, // 5 minutes
   }
 );
@@ -64,6 +66,39 @@ const [data1, data2] = await Promise.all([
   getCachedData('123', true),
   getCachedData('123', true), // Same request, deduped
 ]);
+```
+
+### On-demand Revalidation with `revalidateTag`
+
+You can invalidate cached data on-demand using tags. This is useful when data changes and you need to force a refresh across your application.
+
+First, add tags to your cached function as shown in the advanced example. Then, you can call `revalidateTag` from anywhere in your server-side code to invalidate all cache entries with that tag.
+
+```typescript
+import { revalidateTag } from 'next-quick-cache';
+
+// For example, after updating a user's profile
+await updateUserProfile(userId, newProfileData);
+
+// Invalidate all cache entries tagged with 'users' and 'profiles'
+await revalidateTag('users');
+await revalidateTag('profiles');
+```
+This will mark the tagged data as stale. The next time a function with that tag is called, it will re-fetch the data according to its configuration.
+
+### Controlling Stale Behavior
+
+By default, if cached data is stale, `quick-cache` will return the stale data while revalidating in the background (`serveStale: true`). You can change this behavior to wait for the fresh data instead. This is useful if showing stale data is not acceptable for a particular use case.
+
+```typescript
+const getCriticalData = quick_cache(
+  async (id: string) => await fetchData(id),
+  ['critical-data'],
+  {
+    revalidate: 60,
+    serveStale: false, // Wait for fresh data when stale
+  }
+);
 ```
 
 ### Immediate Starting Value
@@ -125,10 +160,12 @@ const getCachedData = quick_cache(
 
 1. **First call**: Executes function, caches result
 2. **Subsequent calls**: Returns cached data instantly
-3. **After expiry**: Returns stale data immediately, fetches fresh data in background
+3. **After expiry**: Behavior depends on `serveStale`. By default, it returns stale data and fetches fresh data in the background.
 4. **Concurrent calls**: Deduplicates requests, all callers get same Promise
 
 ## API
+
+### `quick_cache`
 
 ```typescript
 quick_cache<TArgs, TReturn>(
@@ -138,18 +175,34 @@ quick_cache<TArgs, TReturn>(
     tags?: string[];
     revalidate?: number | false;
     startingValue?: (...args: TArgs) => TReturn;
+    persistToDisk?: boolean;
+    serveStale?: boolean;
   }
 ): (...args: TArgs) => Promise<TReturn>
 ```
 
-### Parameters
+#### Parameters
 
 - `fetchData`: Async function to cache.
 - `keyParts`: Additional cache key identification (optional).
 - `options.revalidate`: Seconds until revalidation, or `false` to never expire.
 - `options.startingValue`: A function that returns an immediate value if no cache is present. The data fetch will still run in the background.
 - `options.persistToDisk`: Whether to persist cache to disk (default: `true`).
-- `options.tags`: Tags for future cache invalidation support (future feature).
+- `options.tags`: An array of strings to tag the cache entry with, used for on-demand revalidation.
+- `options.serveStale`: When `true` (default), returns stale data while revalidating. When `false`, waits for fresh data.
+
+### `revalidateTag`
+
+Invalidates all cache entries that have the specified tag by marking them as stale.
+
+```typescript
+revalidateTag(tag: string): Promise<void>
+```
+
+#### Parameters
+
+- `tag`: The tag to revalidate.
+
 
 ## License
 
