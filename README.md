@@ -162,6 +162,7 @@ const getCachedData = quick_cache(
 2. **Subsequent calls**: Returns cached data instantly
 3. **After expiry**: Behavior depends on `serveStale`. By default, it returns stale data and fetches fresh data in the background.
 4. **Concurrent calls**: Deduplicates requests, all callers get same Promise
+5. **Memory limit**: The in-memory cache is an LRU bounded by entry count and approximate size. Evicted entries that were persisted to disk are reloaded from disk on the next call.
 
 ## API
 
@@ -202,6 +203,19 @@ revalidateTag(tag: string): Promise<void>
 #### Parameters
 
 - `tag`: The tag to revalidate.
+
+### `configureCache`
+
+Sets the in-memory cache limits. Least recently used entries are evicted when either limit is exceeded.
+
+```typescript
+configureCache(options: { maxEntries?: number; maxBytes?: number }): void
+```
+
+#### Parameters
+
+- `options.maxEntries`: Maximum number of entries kept in memory (default: `1000`).
+- `options.maxBytes`: Approximate maximum size of in-memory data in bytes (default: 256 MB).
 
 
 ## License

@@ -11,6 +11,78 @@ const pendingWrites = new Map<string, { promise: Promise<void>, entry: CacheEntr
 
 const tagToCacheKeys = new Map<string, Set<string>>()
 
+const limits = {
+    maxEntries: 1000,
+    maxBytes: 256 * 1024 * 1024
+}
+let totalBytes = 0
+
+export const configureCache = (options: { maxEntries?: number, maxBytes?: number }): void => {
+    if (options.maxEntries !== undefined) limits.maxEntries = options.maxEntries
+    if (options.maxBytes !== undefined) limits.maxBytes = options.maxBytes
+    evictIfNeeded()
+}
+
+const estimateSize = (data: unknown): number => {
+    if (typeof data === 'string') return data.length * 2
+    if (ArrayBuffer.isView(data)) return data.byteLength
+    if (data instanceof ArrayBuffer) return data.byteLength
+    try {
+        return superjson.stringify(data).length * 2
+    } catch {
+        return 1024
+    }
+}
+
+const untrackTags = (cacheKey: string, tags: string[] | undefined) => {
+    if (!tags) return
+    for (const tag of tags) {
+        const keys = tagToCacheKeys.get(tag)
+        if (!keys) continue
+        keys.delete(cacheKey)
+        if (keys.size === 0) tagToCacheKeys.delete(tag)
+    }
+}
+
+const evictIfNeeded = () => {
+    for (const [key, entry] of cache) {
+        if (cache.size <= limits.maxEntries && totalBytes <= limits.maxBytes) break
+        cache.delete(key)
+        totalBytes -= entry.size
+        // Persisted entries stay tagged so revalidateTag can still expire them on disk
+        if (!entry.persisted) untrackTags(key, entry.tags)
+    }
+}
+
+const getEntry = (cacheKey: string): CacheEntry<unknown> | undefined => {
+    const entry = cache.get(cacheKey)
+    if (entry) {
+        // Refresh LRU position
+        cache.delete(cacheKey)
+        cache.set(cacheKey, entry)
+    }
+    return entry
+}
+
+const deleteEntry = (cacheKey: string) => {
+    const existing = cache.get(cacheKey)
+    if (!existing) return
+    cache.delete(cacheKey)
+    totalBytes -= existing.size
+}
+
+const setEntry = (cacheKey: string, entry: CacheEntry<unknown>) => {
+    const existing = cache.get(cacheKey)
+    if (existing) {
+        cache.delete(cacheKey)
+        totalBytes -= existing.size
+    }
+    entry.size = estimateSize(entry.data)
+    cache.set(cacheKey, entry)
+    totalBytes += entry.size
+    evictIfNeeded()
+}
+
 const CACHE_DIR = path.join(os.tmpdir(), 'quick-cache')
 
 interface CacheOptions<TArgs extends readonly unknown[], TReturn> {
@@ -26,6 +98,8 @@ interface CacheEntry<T> {
     expiry: number
     revalidate: number | false
     tags?: string[]
+    size: number
+    persisted?: boolean
 }
 
 let cacheDirectoryInitialized = false
@@ -40,10 +114,10 @@ const initializeCacheDirectory = async () => {
     }
 }
 
-const getCacheFilePath = (cacheKey: string): string => {
-    const hash = createHash('sha256').update(cacheKey).digest('hex')
-    return path.join(CACHE_DIR, `${hash}.json`)
-}
+const hashKey = (rawKey: string): string => createHash('sha256').update(rawKey).digest('hex')
+
+// cacheKey is already a sha256 hash of the raw key
+const getCacheFilePath = (cacheKey: string): string => path.join(CACHE_DIR, `${cacheKey}.json`)
 
 const loadFromDisk = async (cacheKey: string): Promise<{ entry: CacheEntry<unknown> | null, isExpired: boolean }> => {
     try {
@@ -51,6 +125,7 @@ const loadFromDisk = async (cacheKey: string): Promise<{ entry: CacheEntry<unkno
         const filePath = getCacheFilePath(cacheKey)
         const data = await fs.readFile(filePath, 'utf8')
         const entry = superjson.parse(data) as CacheEntry<unknown>
+        entry.persisted = true
         const isExpired = entry.expiry !== Infinity && Date.now() > entry.expiry
         return { entry, isExpired }
     } catch {
@@ -71,7 +146,8 @@ const saveToDisk = async (cacheKey: string, entry: CacheEntry<unknown>): Promise
         try {
             await initializeCacheDirectory()
             const latestEntry = pendingWrites.get(filePath)?.entry || entry
-            await fs.writeFile(filePath, superjson.stringify(latestEntry))
+            const { size: _size, persisted: _persisted, ...stored } = latestEntry
+            await fs.writeFile(filePath, superjson.stringify(stored))
         } catch (error) {
             console.warn('Failed to save cache to disk:', error)
             throw error
@@ -93,7 +169,7 @@ export const revalidateTag = async (tag: string): Promise<void> => {
     const promises: Promise<void>[] = []
     for (const cacheKey of cacheKeys) {
         promises.push((async () => {
-            let entry = cache.get(cacheKey) as CacheEntry<unknown> | undefined
+            let entry = getEntry(cacheKey) as CacheEntry<unknown> | undefined
 
             if (!entry) {
                 const diskResult = await loadFromDisk(cacheKey)
@@ -123,16 +199,16 @@ export function quick_cache<TArgs extends readonly unknown[], TReturn>(
         const keyPartsKey = keyParts ? JSON.stringify(keyParts) : ''
         const functionKey = fetchData.toString()
         const cwdKey = process.cwd()
-        const cacheKey = `${cwdKey}:${functionKey}:${keyPartsKey}:${argsKey}`
+        const cacheKey = hashKey(`${cwdKey}:${functionKey}:${keyPartsKey}:${argsKey}`)
 
-        let cachedEntry = cache.get(cacheKey) as CacheEntry<TReturn> | undefined
+        let cachedEntry = getEntry(cacheKey) as CacheEntry<TReturn> | undefined
 
         if (!cachedEntry && persistToDisk) {
             const diskResult = await loadFromDisk(cacheKey)
             if (diskResult.entry) {
                 cachedEntry = diskResult.entry as CacheEntry<TReturn>
                 if (!diskResult.isExpired) {
-                    cache.set(cacheKey, cachedEntry)
+                    setEntry(cacheKey, cachedEntry)
                 }
                 if (cachedEntry.tags) {
                     for (const tag of cachedEntry.tags) {
@@ -152,7 +228,7 @@ export function quick_cache<TArgs extends readonly unknown[], TReturn>(
                     revalidateInBackground(fetchData, args, cacheKey, revalidate, persistToDisk, tags)
                     return cachedEntry.data
                 } else {
-                    cache.delete(cacheKey)
+                    deleteEntry(cacheKey)
                 }
             } else {
                 return cachedEntry.data
@@ -175,9 +251,11 @@ export function quick_cache<TArgs extends readonly unknown[], TReturn>(
                     data: freshData,
                     expiry,
                     revalidate,
-                    tags
+                    tags,
+                    size: 0,
+                    persisted: persistToDisk
                 }
-                cache.set(cacheKey, entry)
+                setEntry(cacheKey, entry)
                 if (tags.length > 0) {
                     for (const tag of tags) {
                         if (!tagToCacheKeys.has(tag)) {
@@ -227,9 +305,11 @@ const revalidateInBackground = <TArgs extends readonly unknown[], TReturn>(
                 data: freshData,
                 expiry,
                 revalidate,
-                tags
+                tags,
+                size: 0,
+                persisted: persistToDisk
             }
-            cache.set(cacheKey, entry)
+            setEntry(cacheKey, entry)
             if (tags.length > 0) {
                 for (const tag of tags) {
                     if (!tagToCacheKeys.has(tag)) {
